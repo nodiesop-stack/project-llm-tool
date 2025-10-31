@@ -56,9 +56,6 @@ Bạn sẽ cần chạy 2 terminal song song: một cho Backend và một cho Fr
     ```bash
     cd frontend
     ```
-3.  **Quan trọng**: Chạy lệnh sau để khởi tạo dự án React (chọn `React` -> `JavaScript`):
-    ```bash
-    npm create vite@latest .
     ```
 4.  Cài đặt các gói node:
     ```bash
