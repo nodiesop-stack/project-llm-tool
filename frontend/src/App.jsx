@@ -1,254 +1,206 @@
-// Mở file frontend/src/App.jsx và THAY THẾ toàn bộ nội dung
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import Sidebar from './components/Sidebar';
+import MessageList from './components/MessageList';
+import SuggestionBar from './components/SuggestionBar';
+import InputArea from './components/InputArea';
+import './index.css'; // Đã import file CSS mới
 
-import React, { useState, useEffect, useRef } from 'react';
+// ... (Giữ nguyên các hàm callRealApi, v.v.) ...
+// (Lưu ý: Bạn cần dán lại các hàm callRealApi, handleSubmit, v.v. từ trước)
 
-const API_URL = 'http://127.0.0.1:8000/api/process-stream';
+// URL của backend FastAPI
+const API_BASE_URL = 'http://127.0.0.1:8000';
 
-// --- Văn bản đa ngôn ngữ (giữ nguyên) ---
-const langStrings = {
-  en: {
-    title: "Multi-Purpose LLM Tool",
-    placeholder: "Enter your text here...",
-    tasks: {
-      summarize: "Summarize",
-      translate_french: "Translate to French",
-      explain_eili5: "Explain Like I'm 5",
-      extract_keywords: "Extract Keywords",
-      generate_python: "Generate Python Code",
-    },
-    processing: "Processing...",
-    result_title: "Result:",
-    error_no_text: "Please enter some text first.",
-    error_connect: "Failed to connect to server. Is the backend running?",
-    lang_toggle: "🇻🇳 Tiếng Việt",
-    model_select_label: "Select Model:",
-    models: {
-      openai: "OpenAI (GPT-3.5)",
-      ollama: "Local (Llama 3)",
-      gemini: "Gemini (1.5 Flash)" 
+
+// KIỂM TRA HÀM NÀY TRONG App.jsx
+
+const callRealApi = async (prompt, modelsArray) => { // Nhận vào một MẢNG
+  console.log(`Calling REAL API for:`, modelsArray);
+  
+  try {
+    const response = await axios.post(`${API_BASE_URL}/api/chat`, {
+      prompt: prompt,
+      models: modelsArray, // <-- PHẢI LÀ 'models' (SỐ NHIỀU)
+    });
+    return response.data;
+  } catch (error) {
+    // ... (logic xử lý lỗi của bạn)
+    console.error(`Error calling API:`, error);
+    let errorMessage = "Lỗi không xác định";
+    if (error.response) {
+      errorMessage = error.response.data.detail || JSON.stringify(error.response.data);
+    } else if (error.request) {
+      errorMessage = "Không thể kết nối đến backend. Backend server (Uvicorn) đã chạy chưa?";
+    } else {
+      errorMessage = error.message;
     }
-  },
-  vi: {
-    title: "Công cụ LLM Đa năng",
-    placeholder: "Nhập văn bản của bạn vào đây...",
-    tasks: {
-      summarize: "Tóm tắt",
-      translate_french: "Dịch sang tiếng Pháp",
-      explain_eili5: "Giải thích như trẻ 5 tuổi",
-      extract_keywords: "Trích xuất từ khóa",
-      generate_python: "Tạo code Python",
-    },
-    processing: "Đang xử lý...",
-    result_title: "Kết quả:",
-    error_no_text: "Vui lòng nhập văn bản trước.",
-    error_connect: "Không thể kết nối máy chủ. Backend đã chạy chưa?",
-    lang_toggle: "🇬🇧 English",
-    model_select_label: "Chọn Model:",
-    models: {
-      openai: "OpenAI (GPT-3.5)",
-      ollama: "Miễn phí (Llama 3)",
-      gemini: "Miễn phí (Gemini)" 
-    }
+    
+    return modelsArray.map(modelName => ({
+        model: modelName, 
+        text: `API Error: ${errorMessage}`, 
+        error: true 
+    }));
   }
 };
-
-const taskKeys = [
-  'summarize', 
-  'translate_french', 
-  'explain_eili5', 
-  'extract_keywords', 
-  'generate_python'
-];
-
 function App() {
-  const [language, setLanguage] = useState('vi');
-  const [text, setText] = useState('');
-  
-  // --- THAY ĐỔI STATE: Từ 'result' (string) sang 'messages' (array) ---
-  const [messages, setMessages] = useState([]); // Mảng lưu lịch sử chat
-  
+  const [messages, setMessages] = useState([
+    {
+      id: 1,
+      sender: 'bot',
+      model: 'System',
+      text: "Chào mừng bạn! Đây là ứng dụng demo . Hãy nhập một đoạn văn bản hoặc một yêu cầu. Hệ thống sẽ phân tích và đề xuất các tác vụ phù hợp.",
+    },
+  ]);
+  const [userInput, setUserInput] = useState('');
+  const [selectedModels, setSelectedModels] = useState({
+    GPT: true,      // Mặc định chọn GPT
+    Gemini: true,   // Mặc định chọn Gemini
+    DeepSeek: false,
+    Ollama: false,
+  });
+  const [suggestions, setSuggestions] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [model, setModel] = useState('gemini'); 
 
-  const t = langStrings[language];
-  
-  // Dùng để tự động cuộn xuống message mới nhất
-  const chatEndRef = useRef(null);
+  // ... (Giữ nguyên useEffect cập nhật suggestions) ...
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]); // Cuộn khi có message mới hoặc đang tải
+    const text = userInput.toLowerCase();
 
-  const toggleLanguage = () => {
-    setLanguage(lang => (lang === 'en' ? 'vi' : 'en'));
+    const suggestionsMap = new Map();
+
+    const textProcessingKeywords = ['tóm tắt', 'ý chính', 'trích xuất', 'từ khóa'];
+    if (text.length > 30 || textProcessingKeywords.some(k => text.includes(k))) {
+      suggestionsMap.set('Summarize', { action: 'Summarize', label: 'Tóm tắt' });
+      suggestionsMap.set('Extract Keywords', { action: 'Extract Keywords', label: 'Trích xuất từ khóa' });
+    }
+
+    const codeKeywords = ['code', 'function', 'hàm', 'viết mã', 'lập trình', 'python', 'javascript', 'js', 'py'];
+    if (codeKeywords.some(k => text.includes(k))) {
+      suggestionsMap.set('Generate Python Code', { action: 'Generate Python Code', label: 'Viết code Python' });
+      suggestionsMap.set('Generate JavaScript Code', { action: 'Generate JavaScript Code', label: 'Viết code JavaScript' });
+    }
+
+    const explainKeywords = ['là gì', 'explain', 'giải thích', 'định nghĩa', 'thế nào là'];
+    if (text.length > 5 && explainKeywords.some(k => text.includes(k))) {
+      suggestionsMap.set("Explain Like I'm 5", { action: "Explain Like I'm 5", label: "Giải thích (cho trẻ 5 tuổi)" });
+    }
+
+    const translateKeywords = ['dịch', 'translate', 'sang tiếng', 'bằng tiếng'];
+    if (translateKeywords.some(k => text.includes(k))) {
+      suggestionsMap.set('Translate to French', { action: 'Translate to French', label: 'Dịch sang tiếng Pháp' });
+      suggestionsMap.set('Translate to English', { action: 'Translate to English', label: 'Dịch sang tiếng Anh' });
+    }
+
+    setSuggestions(Array.from(suggestionsMap.values()));
+
+  }, [userInput]);
+
+  const addMessage = (sender, text, model = null) => {
+    const newMessage = {
+      id: Date.now() + Math.random(),
+      sender,
+      text,
+      model,
+    };
+    setMessages((prevMessages) => [...prevMessages, newMessage]);
+  };
+  const handleModelToggle = (modelId) => {
+    setSelectedModels(prevSelectedModels => ({
+      ...prevSelectedModels,
+      [modelId]: !prevSelectedModels[modelId] // Đảo trạng thái (true/false)
+    }));
   };
 
-  // --- CẬP NHẬT LOGIC HANDLECLICK ---
-  const handleTaskClick = async (task) => {
-    if (!text) {
-      setError(t.error_no_text);
+
+  const handleSubmit = async () => {
+    const prompt = userInput.trim();
+    if (prompt === '' || isLoading) return;
+
+    // --- ĐẢM BẢO BẠN CÓ LOGIC NÀY ---
+    // 1. Chuyển object state thành mảng tên model
+    const modelsToQuery = Object.keys(selectedModels).filter(
+      key => selectedModels[key] // Chỉ lấy key (tên model) có giá trị 'true'
+    );
+
+    // 2. Kiểm tra nếu không chọn model nào
+    if (modelsToQuery.length === 0) {
+      alert("Vui lòng chọn ít nhất một mô hình để gửi yêu cầu.");
       return;
     }
+    // -------------------------------------
 
+    addMessage('user', prompt);
+    setUserInput('');
+    setSuggestions([]);
     setIsLoading(true);
-    setError('');
-    
-    // Tạo 2 ID duy nhất cho tin nhắn user và tin nhắn bot
-    const userMessageId = Date.now();
-    const botMessageId = Date.now() + 1;
-    
-    // Lấy tên tác vụ
-    const taskName = t.tasks[task];
-    
-    // Tạo tin nhắn của user
-    const userMessage = {
-      id: userMessageId,
-      sender: 'user',
-      content: `**${taskName}**:\n${text}` // Thêm tên tác vụ vào tin nhắn
-    };
-    
-    // Tạo tin nhắn "rỗng" của bot (để chuẩn bị stream vào)
-    const botMessage = {
-      id: botMessageId,
-      sender: 'bot',
-      content: '' // Bắt đầu rỗng
-    };
-    
-    // Thêm cả 2 tin nhắn vào lịch sử chat
-    setMessages(prevMessages => [...prevMessages, userMessage, botMessage]);
-    
-    // Xóa text trong ô input
-    setText('');
 
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-        body: JSON.stringify({
-          text: text, // Gửi nội dung text gốc
-          task: task, // Gửi key của tác vụ (VD: 'summarize')
-          language: language,
-          model: model 
-        }),
-      });
+    // 3. Đảm bảo bạn gọi API với 'modelsToQuery' (mảng)
+    const responses = await callRealApi(prompt, modelsToQuery); // <-- KIỂM TRA DÒNG NÀY
 
-      if (!response.body) throw new Error("Response body is empty.");
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break; 
-        
-        const chunk = decoder.decode(value, { stream: true });
-        
-        // --- LOGIC STREAM MỚI ---
-        // Tìm message của bot theo ID và "bơm" (append) chunk mới vào
-        setMessages(prevMessages => 
-          prevMessages.map(msg => 
-            msg.id === botMessageId 
-              ? { ...msg, content: msg.content + chunk } 
-              : msg
-          )
-        );
-      }
-
-    } catch (err) {
-      console.error('Lỗi khi gọi API stream:', err);
-      // Hiển thị lỗi trong tin nhắn của bot
-      setMessages(prevMessages => 
-        prevMessages.map(msg => 
-          msg.id === botMessageId 
-            ? { ...msg, content: `*${t.error_connect}*` } 
-            : msg
-        )
-      );
-    } finally {
-      setIsLoading(false);
+    if (responses) {
+        responses.forEach(res => {
+            addMessage('bot', res.text, res.model);
+        });
     }
+    setIsLoading(false);
   };
 
+  const handleSuggestionClick = async (action) => {
+    const text = userInput.trim();
+    if (text === '' || isLoading) {
+      alert("Vui lòng nhập nội dung trước khi chọn tác vụ.");
+      return;
+    }
+    const fullPrompt = `${action}:\n\n"${text}"`;
+
+    const modelsToQuery = Object.keys(selectedModels).filter(
+      key => selectedModels[key] // Chỉ lấy key (tên model) có giá trị 'true'
+    );
+
+    if (modelsToQuery.length === 0) {
+      alert("Vui lòng chọn ít nhất một mô hình để gửi yêu cầu.");
+      return;
+    }
+    // -------------------------------------
+
+    addMessage('user', fullPrompt);
+    setUserInput(''); // Xóa text khỏi text area
+    setSuggestions([]);
+    setIsLoading(true);
+
+    // 3. Gọi API với mảng model chính xác (modelsToQuery)
+    const responses = await callRealApi(fullPrompt, modelsToQuery);
+
+    if (responses) {
+      responses.forEach(res => {
+        addMessage('bot', res.text, res.model);
+      });
+    }
+    setIsLoading(false);
+  };
+
+
   return (
-    // Chúng ta thay đổi bố cục một chút
-    <div className="app-layout">
-      
-      {/* KHUNG CHAT (kết quả) */}
-      <div className="chat-container">
-        {messages.map((message) => (
-          <div key={message.id} className={`message ${message.sender}`}>
-            <div className="avatar">
-              {message.sender === 'user' ? '👤' : '🤖'}
-            </div>
-            <div 
-              className="message-content" 
-              // Dùng 'dangerouslySetInnerHTML' để render **Bold** (Markdown)
-              dangerouslySetInnerHTML={{ 
-                __html: message.content
-                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                  .replace(/\n/g, '<br />') 
-              }} 
-            />
-          </div>
-        ))}
-        
-        {/* "Giữ chỗ" khi bot đang gõ */}
-        {isLoading && (
-          <div className="message bot loading-indicator">
-            <div className="avatar">🤖</div>
-            <div className="message-content">
-              <div className="typing-dot"></div>
-              <div className="typing-dot"></div>
-              <div className="typing-dot"></div>
-            </div>
-          </div>
-        )}
-        
-        {/* Thẻ div rỗng để tự động cuộn */}
-        <div ref={chatEndRef}></div>
-      </div>
-      
-      {/* KHUNG INPUT (nhập liệu) */}
-      <div className="input-container">
-        {error && <div className="error-banner">{error}</div>}
-
-        <div className="config-bar">
-          <label htmlFor="model-select">{t.model_select_label} </label>
-          <select
-            id="model-select"
-            className="model-selector"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-          >
-            <option value="gemini">{t.models.gemini}</option> 
-            <option value="ollama">{t.models.ollama}</option>
-            <option value="openai">{t.models.openai}</option>
-          </select>
-          <button onClick={toggleLanguage} className="lang-toggle-btn">
-            {t.lang_toggle}
-          </button>
+    <div className="app-container">
+      <Sidebar />
+      <main className="chat-window">
+        <div className="chat-container">
+          <MessageList messages={messages} />
+          <SuggestionBar
+            suggestions={suggestions}
+            onSuggestionClick={handleSuggestionClick}
+          />
+          {/* CẬP NHẬT PROPS TRUYỀN VÀO INPUTAREA */}
+          <InputArea
+            userInput={userInput}
+            onInputChange={setUserInput}
+            selectedModels={selectedModels}     // <-- Prop mới
+            onModelToggle={handleModelToggle}  // <-- Prop mới
+            onSubmit={handleSubmit}
+            isLoading={isLoading}
+          />
         </div>
-        
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={t.placeholder}
-          rows={5} // Giảm số hàng
-        />
-        
-        <div className="button-group">
-          {taskKeys.map((taskKey) => (
-            <button
-              key={taskKey}
-              onClick={() => handleTaskClick(taskKey)}
-              disabled={isLoading || !text} // Tắt nút nếu đang tải hoặc không có text
-            >
-              {t.tasks[taskKey]}
-            </button>
-          ))}
-        </div>
-      </div>
-
+      </main>
     </div>
   );
 }

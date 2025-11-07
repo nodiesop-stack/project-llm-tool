@@ -1,86 +1,90 @@
+# /backend/llm_services.py
 import os
-from openai import OpenAI
-from dotenv import load_dotenv
-import ollama 
+import httpx
 import google.generativeai as genai
+from openai import AsyncOpenAI
+from dotenv import load_dotenv
 
-# Tải biến môi trường
+# Tải các biến môi trường từ file .env
 load_dotenv()
 
-# --- CẤU HÌNH CLIENT OPENAI ---
-try:
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-except Exception as e:
-    print(f"Lỗi khi khởi tạo OpenAI client: {e}")
-    client = None
+# --- Cấu hình API ---
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3") # Mặc định là llama3 nếu không set
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") # <-- Lấy key mới
 
-# --- CẤU HÌNH CLIENT GEMINI ---
-try:
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    gemini_model = genai.GenerativeModel('gemini-flash-latest')
-except Exception as e:
-    print(f"Lỗi khi khởi tạo Gemini client: {e}")
-    gemini_model = None
+# Cấu hình Gemini
+genai.configure(api_key=GOOGLE_API_KEY)
+gemini_model = genai.GenerativeModel('gemini-flash-latest')
 
-# --- HÀM GỌI OPENAI ---
-def get_openai_streaming_response(user_text: str, instruction: str):
-    if not client:
-        yield "Lỗi: OpenAI client chưa được khởi tạo. Kiểm tra API key."
-        return
-    full_prompt = f"{instruction}\n\nĐây là văn bản: \"{user_text}\""
+# Cấu hình DeepSeek (dùng client của OpenAI)
+deepseek_client = AsyncOpenAI(
+    api_key=DEEPSEEK_API_KEY,
+    base_url="https://api.deepseek.com/v1"
+)
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# Khởi tạo HTTP client (dùng chung)
+http_client = httpx.AsyncClient(timeout=30.0)
+
+
+# --- Các hàm gọi API ---
+
+async def get_gemini_response(prompt: str) -> str:
+    """Gọi API Gemini"""
     try:
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": full_prompt}
-            ],
-            stream=True,
-        )
-        for chunk in stream:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+        response = await gemini_model.generate_content_async(prompt)
+        return response.text
     except Exception as e:
-        print(f"Lỗi khi gọi API OpenAI: {e}")
-        yield f"Đã xảy ra lỗi: {e}"
+        print(f"Lỗi Gemini: {e}")
+        return f"Lỗi khi gọi Gemini: {str(e)}"
 
-
-# --- HÀM GỌI OLLAMA ---
-def get_ollama_streaming_response(user_text: str, instruction: str):
-    full_prompt = f"{instruction}\n\nĐây là văn bản: \"{user_text}\""
+async def get_deepseek_response(prompt: str) -> str:
+    """Gọi API DeepSeek"""
     try:
-        stream = ollama.chat(
-            model='llama3:8b',
-            messages=[
-                {"role": "system", "content": "Bạn là một trợ lý hữu ích."},
-                {"role": "user", "content": full_prompt}
-            ],
-            stream=True,
+        chat_completion = await deepseek_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}]
         )
-        for chunk in stream:
-            if chunk['message']['content'] is not None:
-                yield chunk['message']['content']
+        return chat_completion.choices[0].message.content
     except Exception as e:
-        print(f"Lỗi khi gọi API Ollama: {e}")
-        yield f"Đã xảy ra lỗi: {e}. (Bạn đã cài Ollama và chạy 'ollama pull llama3:8b' chưa?)"
+        print(f"Lỗi DeepSeek: {e}")
+        return f"Lỗi khi gọi DeepSeek: {str(e)}"
 
-# --- HÀM GỌI GEMINI ---
-def get_gemini_streaming_response(user_text: str, instruction: str):
-    if not gemini_model:
-        yield "Lỗi: Gemini client chưa được khởi tạo. Kiểm tra API key."
-        return
-
-    full_prompt = f"{instruction}\n\nĐây là văn bản: \"{user_text}\""
-    
+async def get_ollama_response(prompt: str) -> str:
+    """Gọi API Ollama (local)"""
     try:
-        response_stream = gemini_model.generate_content(
-            full_prompt,
-            stream=True
-        )
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False # Tắt stream để nhận kết quả 1 lần
+        }
+        response = await http_client.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
+        response.raise_for_status() # Báo lỗi nếu status code là 4xx hoặc 5xx
         
-        for chunk in response_stream:
-            if chunk.text:
-                yield chunk.text
+        # Phân tích response của Ollama
+        json_response = response.json()
+        return json_response.get("response", "Không nhận được phản hồi từ Ollama.")
+        
+    except httpx.ConnectError as e:
+        print(f"Lỗi Ollama: Không thể kết nối. Ollama server đã chạy chưa? {e}")
+        return f"Lỗi: Không thể kết nối đến Ollama server tại {OLLAMA_BASE_URL}. Hãy đảm bảo Ollama đang chạy."
     except Exception as e:
-        print(f"Lỗi khi gọi API Gemini: {e}")
-        yield f"Đã xảy ra lỗi: {e}. (API Key của Gemini đúng chưa?)"
+        print(f"Lỗi Ollama: {e}")
+        return f"Lỗi khi gọi Ollama: {str(e)}"
+
+async def get_gpt_response(prompt: str) -> str:
+    """Gọi API OpenAI (GPT)"""
+    try:
+        chat_completion = await openai_client.chat.completions.create(
+            model="gpt-3.5-turbo", # Bạn có thể đổi sang "gpt-4" nếu muốn
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return chat_completion.choices[0].message.content
+    except Exception as e:
+        # Xử lý lỗi xác thực (API key sai hoặc hết tiền)
+        if "401" in str(e):
+            return "Lỗi khi gọi OpenAI (GPT): Sai API Key hoặc hết tín dụng (401)."
+        print(f"Lỗi OpenAI: {e}")
+        return f"Lỗi khi gọi OpenAI (GPT): {str(e)}"

@@ -1,75 +1,85 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+# /backend/main.py
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from typing import List
+import asyncio
 
-# Import CẢ BA hàm streaming
-from llm_services import (
-    get_openai_streaming_response, 
-    get_ollama_streaming_response,
-    get_gemini_streaming_response
-)
+# Import các Pydantic model và các hàm service
+from models import ChatRequest, ChatResponse
+import llm_services as llm
 
+# Khởi tạo app FastAPI
 app = FastAPI()
 
-# --- CẤU HÌNH CORS ---
+# --- Cấu hình CORS ---
+# Đây là bước BẮT BUỘC để React frontend (ví dụ: localhost:5173)
+# có thể gọi API backend (ví dụ: localhost:8000)
+origins = [
+    "http://localhost:5173",  # Port mặc định của Vite
+    "http://localhost:3000",  # Port mặc định của Create React App
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Cho phép tất cả methods (POST, GET, v.v.)
+    allow_headers=["*"],  # Cho phép tất cả headers
 )
 
-# --- MODEL DỮ LIỆU ---
-class ProcessRequest(BaseModel):
-    text: str
-    task: str
-    language: str 
-    model: str # 'openai', 'ollama', hoặc 'gemini'
-
-# --- PROMPTS ĐA NGÔN NGỮ ---
-TASK_INSTRUCTIONS = {
-    "en": {
-        "summarize": "Summarize the following text concisely:",
-        "translate_french": "Translate the following text to French:",
-        "explain_eili5": "Explain the following concept as if you were talking to a 5-year-old child:",
-        "extract_keywords": "List the most important keywords from the following text, separated by commas:",
-        "generate_python": "Write a Python code snippet based on the following request:"
-    },
-    "vi": {
-        "summarize": "Tóm tắt văn bản sau đây một cách ngắn gọn và súc tích:",
-        "translate_french": "Dịch văn bản sau đây sang tiếng Pháp:",
-        "explain_eili5": "Giải thích nội dung sau đây như thể bạn đang nói với một đứa trẻ 5 tuổi:",
-        "extract_keywords": "Liệt kê các từ khóa (keywords) quan trọng nhất từ văn bản sau, cách nhau bằng dấu phẩy:",
-        "generate_python": "Viết một đoạn code Python dựa trên yêu cầu sau đây:"
-    }
-}
-
-# --- API ENDPOINT ---
-@app.post("/api/process-stream")
-async def process_text_stream(request: ProcessRequest):
-    instruction = TASK_INSTRUCTIONS.get(request.language, TASK_INSTRUCTIONS["en"]).get(request.task)
-    
-    if not instruction:
-        async def error_generator():
-            yield "Lỗi: Tác vụ (task) không hợp lệ"
-        return StreamingResponse(error_generator(), media_type="text/event-stream")
-            
-    # --- BỘ CHUYỂN MẠCH MODEL ---
-    if request.model == 'ollama':
-        response_generator = get_ollama_streaming_response(request.text, instruction)
-    elif request.model == 'openai':
-        response_generator = get_openai_streaming_response(request.text, instruction)
-    elif request.model == 'gemini':
-        response_generator = get_gemini_streaming_response(request.text, instruction)
-    else:
-        async def error_generator():
-            yield "Lỗi: Model không hợp lệ"
-        return StreamingResponse(error_generator(), media_type="text/event-stream")
-    
-    return StreamingResponse(response_generator, media_type="text/event-stream")
+# --- API Endpoints ---
 
 @app.get("/")
 def read_root():
-    return {"message": "LLM Tool Backend is running (3 Models: OpenAI + Ollama + Gemini)!"}
+    return {"message": "Chào mừng đến với NLP API!"}
+
+@app.post("/api/chat", response_model=List[ChatResponse])
+async def handle_chat(request: ChatRequest):
+    """
+    Endpoint chính xử lý chat, nhận prompt và một DANH SÁCH các model
+    """
+    prompt = request.prompt
+    models_to_query = request.models # Đây là một danh sách, ví dụ: ["Gemini", "GPT"]
+    responses = []
+    
+    tasks = []
+    model_names_in_order = [] # Để đảm bảo thứ tự phản hồi
+
+    for model_name in models_to_query:
+        if model_name == "Gemini":
+            tasks.append(llm.get_gemini_response(prompt))
+            model_names_in_order.append("Gemini")
+        elif model_name == "DeepSeek":
+            tasks.append(llm.get_deepseek_response(prompt))
+            model_names_in_order.append("DeepSeek")
+        elif model_name == "Ollama":
+            tasks.append(llm.get_ollama_response(prompt))
+            model_names_in_order.append("Ollama")
+        elif model_name == "GPT":
+            tasks.append(llm.get_gpt_response(prompt)) # <-- Thêm GPT
+            model_names_in_order.append("GPT")
+    
+    # Nếu không có model hợp lệ nào
+    if not tasks:
+        raise HTTPException(status_code=400, detail="Không có model hợp lệ nào được chọn.")
+
+    # Chạy tất cả các tác vụ song song
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Thu thập kết quả
+    for i, res in enumerate(results):
+        model = model_names_in_order[i]
+        if isinstance(res, Exception):
+            responses.append(ChatResponse(model=model, text=str(res), error=True))
+        else:
+            responses.append(ChatResponse(model=model, text=res, error=False))
+
+    return responses
+
+# --- Cách chạy server (dành cho bạn) ---
+# Mở terminal trong thư mục /backend
+# Chạy lệnh:
+# uvicorn main:app --reload
+#
+# Server sẽ chạy tại: http://127.0.0.1:8000
