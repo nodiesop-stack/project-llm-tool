@@ -77,7 +77,6 @@ async def handle_chat(request: ChatRequest):
 
     return responses
 
-# --- Cách chạy server (dành cho bạn) ---
 # Mở terminal trong thư mục /backend
 # Chạy lệnh:
 # uvicorn main:app --reload

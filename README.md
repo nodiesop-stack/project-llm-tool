@@ -4,18 +4,21 @@
 
 ## ✨ Tính năng
 
-* Tóm tắt văn bản
-* Dịch sang tiếng Pháp
-* Giải thích như cho trẻ 5 tuổi
-* Trích xuất từ khóa
-* Tạo code Python
+* So sánh đa mô hình: Gửi cùng một prompt đến nhiều LLM (GPT, Gemini, DeepSeek, Ollama) và so sánh trực tiếp kết quả.
+
+* Lựa chọn linh hoạt: Cho phép người dùng chọn một hoặc nhiều mô hình để thực thi yêu cầu.
+
+* Đề xuất tác vụ thông minh: Tự động đề xuất các hành động (Tóm tắt, Viết code, v.v.) dựa trên nội dung người dùng nhập vào (hỗ trợ cả tiếng Việt và tiếng Anh).
 
 ## 🛠️ Công nghệ sử dụng
 
 * **Frontend:** React (Vite) + Axios
 * **Backend:** Python 3.10+ với FastAPI
-* **LLM API:** OpenAI (GPT-3.5-Turbo)
-
+* **LLM API đa nền tảng:** 
+* OpenAI (GPT-3.5-Turbo, GPT-4)
+* Google (Gemini)
+* DeepSeek
+* Ollama
 ## 📦 Hướng dẫn Cài đặt & Chạy dự án
 
 Bạn sẽ cần chạy 2 terminal song song: một cho Backend và một cho Frontend.
